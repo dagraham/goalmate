@@ -1,0 +1,32 @@
+Screen {
+    background: #2e2e2e; /* Dark grey  near perfect */
+}
+#details_title, #list_title {
+    color: #fff8dc;
+    text-style: bold; /* Make the text bold */
+    text-align: center; /* Center align the text */
+}
+#scroll_title {
+    color: #fff8dc;
+    text-style: bold; /* Make the text bold */
+    text-align: left; /* Center align the text */
+}
+#date_input {
+    border: double green; /* Add a border */
+    text-align: left; 
+}
+ScrollView {
+    border: none; /* Remove any border or frame */
+    padding: 0; /* Remove padding */
+    margin: 0; /* Remove margin */
+}
+#confirm-box {
+    width: 70%;
+    height: auto;
+    padding: 2;
+    color: cyan;
+    border: round dimgrey;
+    background: #2e2e2e;
+    text-align: center;
+    align: center middle; /* This ensures true floating alignment */
+}

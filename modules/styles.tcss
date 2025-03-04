@@ -1,0 +1,9 @@
+#confirm-box {
+    width: 50%;
+    height: auto;
+    padding: 2;
+    border: round red;
+    background: black;
+    text-align: center;
+    align: center middle; /* This ensures true floating alignment */
+}

@@ -66,6 +66,43 @@ class DatabaseManager:
         log_msg(f"Finished adding goal {name} with ID {new_goal_id}.")
         return new_goal_id  # Return the ID to the caller
 
+    def update_goal(
+        self,
+        goal_id: int,
+        name: str,
+        time: str,
+        goal: int,
+        warn: int,
+        created: int = None,  # Not needed for updates
+        modified: int = round(datetime.now().timestamp()),
+    ):
+        """Update an existing goal with new values."""
+
+        # Ensure warn does not make goal + warn negative
+        warn = 0 if goal + warn < 0 else warn
+
+        log_msg(
+            f"Updating goal {goal_id}: name={name}, time={time}, goal={goal}, warn={warn}, modified={modified}"
+        )
+
+        self.cursor.execute(
+            """
+            UPDATE goals 
+            SET name = ?, time = ?, goal = ?, warn = ?, modified = ? 
+            WHERE goal_id = ?
+            """,
+            (name, time, goal, warn, modified, goal_id),
+        )
+
+        self.conn.commit()
+
+        if self.cursor.rowcount == 0:
+            log_msg(f"Warning: Goal {goal_id} was not found or not updated.")
+            return None  # Return None if no rows were updated (e.g., invalid goal_id)
+
+        log_msg(f"Finished updating goal {goal_id}.")
+        return goal_id  # Return the same goal_id if successful
+
     def remove_goal(self, goal_id):
         log_msg(f"Removing goal {goal_id}")
         self.cursor.execute("DELETE FROM goals WHERE goal_id = ?", (goal_id,))
@@ -99,9 +136,9 @@ class DatabaseManager:
     def list_goals(self):
         self.cursor.execute("""
             SELECT goal_id, name, time, goal, warn, created, 
-                (SELECT COUNT(*) FROM Completions 
-                WHERE goal_id = g.goal_id 
-                AND completion >= strftime('%s', 'now') - g.time) AS done
+            (SELECT COUNT(*) FROM Completions 
+            WHERE goal_id = g.goal_id 
+            AND completion >= strftime('%s', 'now') - g.time) AS done
             FROM goals g
             ORDER BY name
         """)
@@ -111,21 +148,50 @@ class DatabaseManager:
         """Retrieve all completions for a given goal_id."""
         self.cursor.execute(
             """
-            SELECT completion FROM Completions
+            SELECT completion_id, completion FROM Completions
             WHERE goal_id = ?
-            ORDER BY completion ASC
+            ORDER BY completion DESC
         """,
             (goal_id,),
         )
 
-        return [row[0] for row in self.cursor.fetchall()]
+        return self.cursor.fetchall()
+        # return [row[0] for row in self.cursor.fetchall()]
+
+    def remove_completion(self, completion_id):
+        """Delete a specific completion entry by completion_id."""
+        self.cursor.execute(
+            "DELETE FROM Completions WHERE completion_id = ?", (completion_id,)
+        )
+        self.conn.commit()
+
+    def get_completion(self, completion_id):
+        """Retrieve the completion timestamp for a given completion_id."""
+        self.cursor.execute(
+            "SELECT completion FROM Completions WHERE completion_id = ?",
+            (completion_id,),
+        )
+        result = self.cursor.fetchone()
+
+        return result[0] if result else None  # Return timestamp or None if not found
+
+    def update_completion(self, completion_id: int, new_timestamp: int):
+        """Update a completion's timestamp given its completion_id."""
+
+        self.cursor.execute(
+            "UPDATE Completions SET completion = ? WHERE completion_id = ?",
+            (new_timestamp, completion_id),
+        )
+        self.conn.commit()
 
     def show_goal(self, goal_id):
         self.cursor.execute(
             """
             SELECT goal_id, name, time, goal, warn, created, modified, 
-            (SELECT COUNT(*) FROM Completions WHERE Completions.goal_id = goals.goal_id) AS num_completions
-            FROM goals WHERE goal_id = ?
+                (SELECT COUNT(*) FROM Completions 
+                WHERE goal_id = g.goal_id 
+                AND completion >= strftime('%s', 'now') - g.time) AS done
+            FROM goals g WHERE goal_id = ?
         """,
             (goal_id,),
         )
@@ -133,25 +199,3 @@ class DatabaseManager:
 
     def close(self):
         self.conn.close()
-
-    # def get_goal_progress(self, goal_id):
-    #     """Retrieve goal progress: number of completions within the time from now."""
-    #
-    #     self.cursor.execute(
-    #         """
-    #         SELECT
-    #             g.goal_id,
-    #             g.name,
-    #             g.goal,
-    #             g.time,
-    #             g.created,
-    #             (SELECT COUNT(*) FROM Completions
-    #             WHERE goal_id = g.goal_id
-    #             AND completion >= strftime('%s', 'now') - g.time) AS done
-    #         FROM goals g
-    #         WHERE g.goal_id = ?;
-    #     """,
-    #         (goal_id,),
-    #     )
-    #
-    #     return self.cursor.fetchone()

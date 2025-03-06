@@ -1,5 +1,6 @@
 from .__version__ import version as VERSION
 from datetime import datetime, timedelta
+from dateutil.parser import ParserError
 
 from textual.screen import ModalScreen
 from textual.widgets import Label, Button, Static
@@ -18,13 +19,13 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widgets import Input
 from textual.widgets import Markdown
+import re
 
 # from textual.widgets import Label
 import string
 import shutil
 
 # from textual.widgets import Button
-from dateutil.parser import parse, ParserError
 from rich.rule import Rule
 from typing import List
 
@@ -32,7 +33,17 @@ from typing import List
 from textual.containers import Container
 
 # from textual.widgets import Static, Input
-from .common import log_msg, display_messages, COLORS, fmt_dt, fmt_td, truncate_string
+from .common import (
+    log_msg,
+    display_messages,
+    COLORS,
+    # fmt_dt,
+    # fmt_td,
+    parse,
+    seconds_to_datetime,
+    parse_goal_string,
+    truncate_string,
+)
 
 HEADER_COLOR = NAMED_COLORS["LightSkyBlue"]
 TITLE_COLOR = NAMED_COLORS["Cornsilk"]
@@ -145,18 +156,23 @@ class ConfirmScreen(ModalScreen):
 
 
 class AddGoalScreen(ModalScreen):
-    """Screen for adding a new goal."""
+    """Screen for adding/editing a goal."""
 
-    def __init__(self, controller):
+    def __init__(self, controller, goal_id: int | None = None, goal_string: str = ""):
         super().__init__()
         self.controller = controller
-        self.goal_name = ""
+        self.goal_id = goal_id
+        self.goal_string = goal_string
+        # self.goal_name = ""
 
     def compose(self) -> ComposeResult:
         """Create UI elements with a fixed footer."""
         with Container(id="content"):  # Content container
             yield Static("Enter the new goal:", id="title")
-            yield Input(placeholder="goal name num/period [warn]", id="goal_input")
+            if self.goal_id:
+                yield Input(value=self.goal_string, id="goal_input")
+            else:
+                yield Input(placeholder="goal name num/period [warn]", id="goal_input")
             yield Static("", id="validation_message")  # Feedback message
 
         # Footer explicitly placed at the bottom
@@ -171,25 +187,38 @@ class AddGoalScreen(ModalScreen):
         # footer.styles.align = "center"
         footer.styles.margin_top = 1  # Ensures space between content and footer
 
-    def validate_goal(self, name: str) -> str:
-        """Check if the goal name is unique."""
-        if name and self.controller.is_goal_unique(name):
-            return f"[green]Valid goal name: {name}[/green]"
-        return "[red]Goal already exists or invalid name![/red]"
+    def validate_goal(self, goal_input: str) -> str:
+        """Check if input is complete and name is unique."""
+        match = re.match(
+            r"(.+?)(?:\s+(\d+)(?:/(\d+[a-z]))?)?(?:\s+([-+]?\d+))?$",
+            goal_input.strip(),
+        )
+        if not match:
+            return "[yellow]Invalid entry: Expected: 'name X/Yz [W]' where name is unique and W is optional.[/yellow]"
+
+        name, target, period, warn = match.groups()
+        if name and not self.goal_id and not self.controller.is_goal_unique(name):
+            return "[yellow]Goal name must be unique![/yellow]"
+        if not target or not period:
+            return "[yellow]Invalid entry: Expected: 'name X/Yz [W]' where name is unique and W is optional.[/yellow]"
+        return f"[green]Valid goal: {name} {target}/{period} {warn}[/green]"
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Validate input and update the feedback message."""
         validation_message = self.query_one("#validation_message", Static)
         validation_message.update(self.validate_goal(event.value))
-        self.goal_name = event.value
+        self.goal_string = event.value
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key submission."""
-        if event.input.id == "goal_input" and self.controller.is_goal_unique(
-            self.goal_name
-        ):
-            self.controller.add_goal(self.goal_name)
-            self.dismiss(self.goal_name)  # Confirm and close
+        if event.input.id == "goal_input":
+            if self.goal_id:
+                # updating goal
+                self.controller.update_goal(self.goal_id, self.goal_string)
+            else:
+                # adding goal
+                self.controller.add_goal(self.goal_string)
+            self.dismiss(self.goal_string)  # Confirm and close
 
     def on_key(self, event):
         """Handle key presses for cancellation."""
@@ -205,8 +234,8 @@ class DateInputScreen(ModalScreen):
         controller,
         goal_id,
         goal_name,
-        second_datetime: bool = False,
-        prompt="Enter completion date:",
+        current_datetime: int | None = None,
+        prompt="Update completion datetime",
     ):
         super().__init__()
         self.controller = controller
@@ -214,17 +243,27 @@ class DateInputScreen(ModalScreen):
         self.goal_name = goal_name
         self.prompt = prompt  # Dynamic prompt message
         self.parsed_date = None  # Holds valid parsed datetime
-        self.second_datetime = second_datetime
+        self.current_datetime = current_datetime
         self.was_escaped = False  # Tracks whether escape was pressed
 
     def compose(self) -> ComposeResult:
         """Create UI elements with a fixed footer."""
         with Container(id="content"):  # Content container
             yield Static(
-                f'Recording completion for "{self.goal_name}".\n{self.prompt}',
+                f'Completion for "{self.goal_name}".\n{self.prompt}',
                 id="date_title",
             )
-            yield Input(placeholder="datetime expression", id="date_input")
+            # current_datetime = round(datetime.now().timestamp())
+            if self.current_datetime:
+                yield Input(
+                    value=f"{seconds_to_datetime(self.current_datetime)}",
+                    id="date_input",
+                )
+            else:
+                yield Input(
+                    placeholder=f"{seconds_to_datetime(self.current_datetime)}",
+                    id="date_input",
+                )
             yield Static("", id="validation_message")  # Feedback message
 
         # Footer explicitly placed at the bottom
@@ -241,18 +280,9 @@ class DateInputScreen(ModalScreen):
     def validate_date(self, date_str: str) -> str:
         """Try to parse the entered date."""
         log_msg(f"{date_str = }")
-        if self.second_datetime:
-            if not date_str.strip():  # Allow empty input, return empty string
-                self.parsed_date = ""
-                return (
-                    "[yellow]No needed date entered; default behavior applied.[/yellow]"
-                )
-            if date_str.strip().lower() == "none":  # Allow "none" input
-                self.parsed_date = "none"
-                return "[yellow]Omitting interval for this completion.[/yellow]"
         try:
             self.parsed_date = parse(date_str)  # Parse the date
-            return f"[green]Recognized: {self.parsed_date.strftime('%Y-%m-%d %H:%M (%A)')}[/green]"
+            return f"[green]Recognized: {self.parsed_date.strftime('%y-%m-%d %H:%M (%A)')}[/green]"
         except ParserError:
             self.parsed_date = None
             return "[red]Invalid format! Try again.[/red]"
@@ -270,16 +300,11 @@ class DateInputScreen(ModalScreen):
 
         if event.input.id == "date_input":
             input_value = event.value.strip()
-            if input_value.lower() == "none":
-                self.dismiss(None)  # Explicitly discard the interval
-            elif input_value == "":
-                self.dismiss("")  # Explicitly return empty string (use default)
-            else:
-                try:
-                    parsed_date = parse(input_value)
-                    self.dismiss(parsed_date)  # Return the parsed datetime
-                except ParserError:
-                    self.dismiss(None)  # Should not happen due to validation
+            try:
+                parsed_date = parse(input_value)
+                self.dismiss(parsed_date)  # Return the parsed datetime
+            except ParserError:
+                self.dismiss(None)  # Should not happen due to validation
 
     def on_key(self, event):
         """Handle key presses for cancellation."""
@@ -468,6 +493,25 @@ class TextualView(App):
         self.push_screen(AddGoalScreen(self.controller), callback=on_close)
         # self.push_screen(AddGoalScreen(self.controller))
 
+    def action_update_goal(self):
+        """Update the currently selected goal."""
+        goal_string = self.controller.get_goal_string(self.selected_goal)
+
+        def on_close(goal_name):
+            if goal_name:
+                self.notify(
+                    f"Goal '{goal_name}' updated successfully!", severity="success"
+                )
+                self.action_show_list()  # Refresh the list view
+            else:
+                self.notify("Goal addition cancelled.", severity="warning")
+
+        self.push_screen(
+            AddGoalScreen(self.controller, self.selected_goal, goal_string),
+            callback=on_close,
+        )
+        # self.push_screen(AddGoalScreen(self.controller))
+
     def action_show_list(self):
         """Show the list of goals using FullScreenList."""
         goals = self.controller.show_goals_as_list(
@@ -482,10 +526,21 @@ class TextualView(App):
 
     def action_show_goal(self, tag: str):
         """Show details for a selected goal."""
-        goal_id, name, details = self.controller.show_goal(tag)
+        result = self.controller.show_goal(tag)
+        log_msg(f"{result = }")
+        goal_id, name, details, tag_to_idx = result
         self.selected_goal = goal_id
         self.selected_name = name
         self.selected_tag = tag
+        self.completion_tag_to_idx = tag_to_idx
+        self.view = "details"  # Track that we're in the details view
+        self.push_screen(DetailsScreen(details))
+
+    def action_refresh_goal(self):
+        """Show details for a selected goal."""
+        result = self.controller.show_goal(self.selected_goal)
+        log_msg(f"{result = }")
+        goal_id, name, details, tag_to_idx = result
         self.view = "details"  # Track that we're in the details view
         self.push_screen(DetailsScreen(details))
 
@@ -552,14 +607,69 @@ class TextualView(App):
             callback=on_completion_close,  # ✅ Correctly passing the callback
         )
 
-    # def action_delete_goal(self):
-    #     """Delete the currently selected goal."""
-    #     log_msg(f"Deleting {self.selected_goal = }")
-    #     self.controller.remove_goal(self.selected_goal)
-    #     self.notify("Deleted goal...", severity="warning")
-    #     self.action_show_list()
+    def action_update_completion(self, completion_id):
+        """Prompt the user for completion datetime."""
+        completion_fmt = ""
+        completion_timestamp = self.controller.get_completion(completion_id)
+        log_msg(f"{completion_timestamp = }")
+        if not completion_timestamp:
+            self.notify("Could not obtain the current timestamp!", severity="warning")
+            return
 
-    def action_delete_goal(self):
+        def on_completion_close(completion_datetime):
+            """Handle datetime input."""
+            log_msg(f"{self.selected_goal = }, {completion_datetime = }")
+            if completion_datetime is None:
+                return  # User canceled
+
+            if isinstance(completion_datetime, datetime):
+                completion_datetime = round(completion_datetime.timestamp())
+            # ✅ Ensure record_completion is called with all required arguments
+            log_msg(f"{completion_id = }, {completion_datetime = }")
+            self.controller.update_completion(completion_id, completion_datetime)
+
+            self.notify(
+                f'Updated completion for "{self.selected_name}"',
+                severity="success",
+            )
+
+            # Refresh the view
+            self.action_refresh_goal()
+
+        # ✅ Ensure the first screen passes its result to on_completion_close
+        self.push_screen(
+            DateInputScreen(
+                self.controller,
+                self.selected_goal,
+                self.selected_name,
+                completion_timestamp,
+                "Enter the datetime the goal was completed:",
+            ),
+            callback=on_completion_close,  # ✅ Correctly passing the callback
+        )
+
+    def action_remove_completion(self, completion_id: int | None = None):
+        """Request confirmation before deleting the completion, using 'y' or 'n'."""
+        if completion_id is None:
+            self.notify("No completion selected.", severity="warning")
+            return
+        completion_timestamp = self.controller.get_completion(completion_id)
+        if not completion_timestamp:
+            self.notify("Could not obtain the current timestamp!", severity="warning")
+            return
+
+        def confirm_delete():
+            log_msg(f"Deleting {completion_id = }, {completion_timestamp = }")
+            self.controller.remove_completion(completion_id)
+            self.notify(
+                f"Deleted completion {seconds_to_datetime(completion_timestamp)} from {self.selected_name}",
+                severity="warning",
+            )
+            self.action_refresh_goal()
+
+        self.push_screen(ConfirmScreen(self.selected_name, confirm_delete))
+
+    def action_remove_goal(self):
         """Request confirmation before deleting the currently selected goal, using 'y' or 'n'."""
         if self.selected_goal is None:
             self.notify("No goal selected.", severity="warning")
@@ -573,10 +683,6 @@ class TextualView(App):
             self.action_show_list()
 
         self.push_screen(ConfirmScreen(self.selected_name, confirm_delete))
-
-    def action_edit_goal(self):
-        """Edit the currently selected goal."""
-        self.notify("Editing goal...", severity="info")
 
     def on_key(self, event):
         """Handle key events based on the current view."""
@@ -605,9 +711,28 @@ class TextualView(App):
             elif event.key == "C":
                 self.action_complete_goal()
             elif event.key == "D":
-                self.action_delete_goal()
+                self.action_remove_goal()
             elif event.key == "E":
-                self.action_edit_goal()
+                self.action_update_goal()
+
+            # Step 1: Select a completion tag (lowercase letter)
+            elif event.key and event.key in self.completion_tag_to_idx:
+                self.selected_tag = self.completion_tag_to_idx[
+                    event.key
+                ]  # Store selected tag
+                self.notify(
+                    f"Selected completion {self.selected_tag}. Press 'u' to update or 'r' to remove.",
+                    severity="info",
+                )
+
+            # Step 2: Perform action based on second keypress
+            elif self.selected_tag and event.key in ["u", "r"]:
+                if event.key == "u":
+                    self.action_update_completion(self.selected_tag)
+                elif event.key == "r":
+                    self.action_remove_completion(self.selected_tag)
+                self.selected_tag = None  # Reset after action
+
         elif self.view == "help":
             if event.key in ["escape", "L"]:
                 self.action_show_list()

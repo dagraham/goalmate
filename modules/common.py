@@ -1,6 +1,7 @@
 import inspect
 from datetime import datetime
-from dateutil.parser import parse, parserinfo
+from dateutil.parser import parse as du_parse
+from dateutil.parser import parserinfo
 from dateutil.tz import gettz
 import textwrap
 import shutil
@@ -23,7 +24,13 @@ COLORS = {
 }
 
 
-def parse_goal_string(goal_string):
+def parse(input_str: str) -> datetime:
+    """parse string using dateutil.parser.parse and parserinfo"""
+    info = parserinfo(dayfirst=False, yearfirst=True)
+    return du_parse(input_str.strip(), parserinfo=info)
+
+
+def parse_goal_string(goal_string: str, validate: bool = False):
     """
     Parses a goal string like:
         - 'my goal 6/2w -2' → ('my goal', 6, '2w', -2)
@@ -38,11 +45,21 @@ def parse_goal_string(goal_string):
     )
     if match:
         name, target, period, warn = match.groups()
-        return name, int(target), period, int(warn) if warn else 0
-    else:
-        raise ValueError(
-            "Invalid goal format. Expected: 'goal description X/Yz [W]' where W is optional."
+        if validate:
+            return (
+                True,
+                f"Valid: name = {name}, goal = {target}, time = {period}, warn = {warn}",
+            )
+        return (
+            name,
+            int(target),
+            period,
+            int(warn) if warn else 0,
         )
+    else:
+        if validate:
+            return False, "Invalid. Expected: 'goal name X/Yz [W]' where W is optional."
+        return "Invalid. Expected: 'goal name X/Yz [W]' where W is optional."
 
 
 def time_to_seconds(time_str: str) -> int:
@@ -155,11 +172,8 @@ def datetime_to_seconds(input_str: str) -> int:
     else:
         datetime_part, timezone_part = input_str, None
 
-    # Create custom parserinfo with desired settings
-    info = parserinfo(dayfirst=False, yearfirst=True)
-
     # Parse the datetime part
-    dt = parse(datetime_part.strip(), parserinfo=info)
+    dt = parse(datetime_part)
 
     if timezone_part:
         timezone_part = timezone_part.strip()

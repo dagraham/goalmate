@@ -593,7 +593,7 @@ class TextualView(App):
             )
 
             # Refresh the view
-            self.action_show_goal(self.selected_tag)
+            self.action_refresh_goal()
 
         # ✅ Ensure the first screen passes its result to on_completion_close
         self.push_screen(

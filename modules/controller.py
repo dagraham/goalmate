@@ -235,8 +235,9 @@ class Controller:
 
     def goal_history(self, goal_id, done: int = 0):
         completions = self.db_manager.list_completions(goal_id)
+        tag_to_idx = {}
         if not completions:
-            return ["[bold #87cefa]No completions[/bold #87cefa]"]
+            return ["[bold #87cefa]No completions[/bold #87cefa]", tag_to_idx]
         log_msg(f"{completions = }")
 
         self.afill = 1 if len(completions) < 26 else 2 if len(completions) < 676 else 3
@@ -247,7 +248,6 @@ class Controller:
         results = [
             "[bold #87cefa]Completions[/bold #87cefa]:",
         ]
-        tag_to_idx = {}
         for idx, record in enumerate(completions):
             completion_id, completion = record
             log_msg(f"{idx = }, {done = }, {type(done) = },  {completion = }")
